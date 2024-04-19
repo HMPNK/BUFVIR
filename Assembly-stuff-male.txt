@@ -1,0 +1,88 @@
+#ASSEMBLE PECAT corrected reads, supported by flye assembly of uncorrected reads using WTDBG2
+~/bin/fasta_formatter -i assembly.fasta -w 250000 | grep -v ">" | mawk '{i++;print ">SP"i"\n"$1}' > split250000.fa
+seqtk seq -r assembly.fasta | ~/bin/fasta_formatter -w 250000 | grep -v ">" | mawk '{i++;print ">SP"i"rc\n"$1}' > revcomp-split250000.fa
+pigz -c split250000.fa revcomp-split250000.fa > split-both.fa.gz
+rm split250000.fa revcomp-split250000.fa
+nohup ./wtdbg2.2/wtdbg2 -i corrected_reads.fasta.gz -i split-both.fa.gz -t 100 -e 3 -p 21 -k 0 -AS 4 -K 0.05 -s 0.5 -g 3800000000 -L 4000 -o COLLAPSE-FLYE > CO                                                                              LLAPSE-FLYE.log 2>&1
+./wtdbg2.2/wtdbg-cns -i COLLAPSE-FLYE.ctg.lay.gz -o COLLAPSE-FLYE.ctg.lay.fasta -t 80 >> COLLAPSE-FLYE.log 2>&1
+ls COLLAPSE-FLYE* | grep -vwE 'COLLAPSE-FLYE.log|COLLAPSE-FLYE.ctg.lay.fasta' | xargs rm
+
+#RECOVER MISSING CSA-like strategy
+pigz -dc  corrected_reads.fasta.gz split-both.fa.gz | awk '{if(substr($1,1,1)==">") {print substr($1,2) > "readnames.list" ;print} else{print}}' | minimap2 -K                                                                               2G -I 100G -t 100 -x asm5 COLLAPSE-FLYE.ctg.lay.fasta - > screen.step1.fa.paf 2> screen.log
+awk '{if(o!=$1 && ($4-$3)/$2>0.1) {print $1};o=$1}' screen.step1.fa.paf | sort -u > screen.reads_mapped.list
+sort screen.reads_mapped.list readnames.list| uniq -u > screen.reads_UNmapped.list
+pigz -dc corrected_reads.fasta.gz split-both.fa.gz | seqtk subseq /dev/stdin screen.reads_UNmapped.list | pigz -c > screen.reads_UNmapped.fa.gz
+nohup ./wtdbg2.2/wtdbg2 -i screen.reads_UNmapped.fa.gz -t 100 -e 3 -p 21 -k 0 -AS 4 -K 0.05 -s 0.5 -g 3800000000 -L 4000 -o COLLAPSE-FLYE-MISSING > COLLAPSE-FL                                                                              YE-MISSING.log 2>&1
+./wtdbg2.2/wtdbg-cns -i COLLAPSE-FLYE-MISSING.ctg.lay.gz -o COLLAPSE-FLYE-MISSING.ctg.lay.fasta -t 80 >> COLLAPSE-FLYE-MISSING.log 2>&1
+ls COLLAPSE-FLYE-MISSING* | grep -vwE 'COLLAPSE-FLYE-MISSING.log|COLLAPSE-FLYE-MISSING.ctg.lay.fasta' | xargs rm
+mawk '{if(substr($1,1,1)==">"){i++;print ">ctg"i} else{print}}' COLLAPSE-FLYE.ctg.lay.fasta COLLAPSE-FLYE-MISSING.ctg.lay.fasta | pigz -c > RAW-CONTIGS.fasta.g                                                                              z
+rm COLLAPSE-FLYE.ctg.lay.fasta COLLAPSE-FLYE-MISSING.ctg.lay.fasta screen.step1.fa.paf screen.reads_mapped.list readnames.list screen.reads_UNmapped.list
+
+#ORDER by female assembly and split chimeric contigs
+nohup bash ~/bin/Fast-RAGOUT2.sh RAW-CONTIGS.fasta.gz bufVir1d.fa.gz 80 100000 RAW asm5 > Fast-RAGOUT2.log 2>&1
+rm -rf RAW.maf.gz RAW.recipe.txt RAGOUT-RAW RAW.unsplit.paf RAW.pdf RAW.eps
+#STITCH neighbours / remove some strange naming first ("[]" in fasta header of ragout)
+seqkit sort -l -r RAW.result.fa.gz | awk '{if(substr($1,1,1)==">"){i++;n=">scf"i;print n} else {print $1}}' | pigz -c > RAW.result.srt.fa.gz
+mv RAW.result.srt.fa.gz RAW.result.fa.gz
+seqtk seq -l 0 RAW.result.fa.gz | parallel --keep-order -j 12 -l 2 --pipe 'perl /home/kuhl/bin/last_scaffold_stitch.98.pl /dev/stdin' | pigz -c > RAW.result.st                                                                              itch.fa.gz
+#Get refined contigs (splitted and joined)
+bash ~/bin/scaff2ctg.sh RAW.result.stitch.fa.gz
+#remove intermediate stuff and rename contig file
+rm scaffold_stitch.closed.overlaps scaffold_stitch.skipped.overlaps RAW.result.stitch.fa.gz
+mv RAW.result.stitch.fa.gz.contigs.gz REFINED.ctg.fa.gz
+
+#HI-C mapping
+nohup chromap -i -r REFINED.ctg.fa.gz  -o REFINED.ctg.index > REFINED.ctg.index.log 2>&1
+nohup chromap --preset hic -r REFINED.ctg.fa.gz -x REFINED.ctg.index --remove-pcr-duplicates -1 HiC-DATA/Banque_bufoldes_viridis1_S1_L001_R1_001.fastq.gz -2 Hi                                                                              C-DATA/Banque_bufoldes_viridis1_S1_L001_R2_001.fastq.gz --pairs -o 1.pairs -t 50 > 1.chromap.log 2>&1
+nohup chromap --preset hic -r REFINED.ctg.fa.gz -x REFINED.ctg.index --remove-pcr-duplicates -1 HiC-DATA/Banque_bufoldes_viridis2_S2_L001_R1_001.fastq.gz -2 Hi                                                                              C-DATA/Banque_bufoldes_viridis2_S2_L001_R2_001.fastq.gz --pairs -o 3.pairs -t 50 > 3.chromap.log 2>&1
+nohup chromap --preset hic -r REFINED.ctg.fa.gz -x REFINED.ctg.index --remove-pcr-duplicates -1 HiC-DATA/Banque_bufoldes_viridis_1_S1_R1_001.fastq.gz     -2 Hi                                                                              C-DATA/Banque_bufoldes_viridis_1_S1_R2_001.fastq.gz     --pairs -o 2.pairs -t 50 > 2.chromap.log 2>&1
+nohup chromap --preset hic -r REFINED.ctg.fa.gz -x REFINED.ctg.index --remove-pcr-duplicates -1 HiC-DATA/Banque_bufoldes_viridis_2_S2_R1_001.fastq.gz     -2 Hi                                                                              C-DATA/Banque_bufoldes_viridis_2_S2_R2_001.fastq.gz     --pairs -o 4.pairs -t 50 > 4.chromap.log 2>&1
+
+#YAHS
+cat 1.pairs 2.pairs 3.pairs 4.pairs | grep -v ^# | mawk '{i++;print $2"\t"$3"\t"$3+1"\t"i"/1\t1\n"$4"\t"$5"\t"$5+1"\t"i"/2\t1"}' > HiC.bed
+rm *pairs -f
+pigz -d REFINED.ctg.fa.gz
+samtools faidx REFINED.ctg.fa
+yahs --no-mem-check -q 1 -o YAHS -r 10000,15000,20000,30000,50000,80000,100000,150000,200000,300000,400000,500000,750000,1000000,1500000,2000000,3000000,400000                                                                              0,6000000,8000000,10000000 REFINED.ctg.fa HiC.bed > YAHS.log 2>&1 &
+rm YAHS_r* YAHS_inital_break_0* YAHS.bin
+pigz YAHS_scaffolds_final.fa HiC.bed
+
+#REFINE BY RAGOUT2 and female
+nohup bash ~/bin/Fast-RAGOUT2.sh YAHS_scaffolds_final.fa.gz bufVir1d.fa.gz 80 100000 YAHS-REFINE asm5 > Fast-RAGOUT2-R2.log 2>&1
+rm -rf YAHS-REFINE.maf.gz YAHS-REFINE.recipe.txt RAGOUT-YAHS-REFINE YAHS-REFINE.unsplit.paf YAHS-REFINE.eps
+
+#STITCH / remove some strange naming first ("[]" in fasta header of ragout)
+seqkit sort -l -r YAHS-REFINE.result.fa.gz | awk '{if(substr($1,1,1)==">"){i++;n=">scf"i;print n} else {print $1}}' | pigz -c > YAHS-REFINE.result.srt.fa.gz
+mv YAHS-REFINE.result.srt.fa.gz YAHS-REFINE.result.fa.gz
+seqtk seq -l 0 YAHS-REFINE.result.fa.gz | parallel --keep-order -j 12 -l 2 --pipe 'perl /home/kuhl/bin/last_scaffold_stitch.98.pl /dev/stdin' | pigz -c > YAHS-                                                                              REFINE.result.stitch.fa.gz &
+rm scaffold_stitch.closed.overlaps scaffold_stitch.skipped.overlaps
+
+#POLISH split to contigs for FLYE
+bash ~/bin/scaff2ctg.sh YAHS-REFINE.result.stitch.fa.gz
+mv YAHS-REFINE.result.stitch.fa.gz.contigs.gz YAHS-REFINE.result.stitch.CTG.fa.gz
+pigz -d YAHS-REFINE.result.stitch.CTG.fa.gz
+
+#POLISH with long-reads (just for fun use the sup-called pecat corrected here)
+#test if this can be skipped due to assembly from pecat corrected reads (would save >12h flye run).
+#flye improves the assembly slighly 0.2% more complete Buscos / 0.2% less missing buscos, will keep flye though it is computationally expensive
+nohup flye --threads 100 --nano-hq SUP-PECAT-HIFIASM-TEST/corrected_reads_preQ.fasta.gz --polish-target YAHS-REFINE.result.stitch.CTG.fa --out-dir POLISH > FLY                                                                              E-POLISH.log 2>&1 &
+cd POLISH
+
+#POLISH with male poolseq
+ln -s ../POOLSEQ-DATA/Bufo_Males*gz .
+~/bin/PLATYPOLISH-CHROMAP.sh polished_1.fasta Bufo_Males_EDSW210029004-1a_HV5TVDSX2_L2_1.fq.gz Bufo_Males_EDSW210029004-1a_HV5TVDSX2_L2_2.fq.gz PLATYPOLISHED-R                                                                              1 56
+
+#ROUND2 / USE CHROMAP TO SPEED things up by factor 4!!!
+~/bin/PLATYPOLISH-CHROMAP.sh PLATYPOLISHED-R1.fa Bufo_Males_EDSW210029004-1a_HV5TVDSX2_L2_1.fq.gz Bufo_Males_EDSW210029004-1a_HV5TVDSX2_L2_2.fq.gz PLATYPOLISHE                                                                              D-R2 56
+
+#get back scaffolds
+samtools faidx PLATYPOLISHED-R2.fa
+sort -V PLATYPOLISHED-R2.fa.fai | bash ~/bin/scfctgToagp.sh > PLATYPOLISHED-R2.scf.agp
+agp_to_fasta PLATYPOLISHED-R2.scf.agp PLATYPOLISHED-R2.fa > PLATYPOLISHED-R2.scf.fa
+pigz *.fa *.fasta
+rm *index *bam
+mv PLATYPOLISHED-R2.scf.fa.gz ../bufVirM.fa.gz
+mv PLATYPOLISHED-R2.scf.agp ../bufVirM.agp
+cd ..
+#final stitch to check if anything more can be closed after consensus correction
+bash ~/bin/STITCH95.sh bufVirM.fa.gz | pigz -c > bufVirM.final.fa.gz
