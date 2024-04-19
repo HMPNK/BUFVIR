@@ -1,0 +1,46 @@
+##High kmer short read assembly using tweaked version of IDBA-UD:
+idba_ud_tweaked --mink 38 --maxk 252 --step 50 --seed_kmer 60 --similar 0.96 --inner_mink 14 --inner_step 14 --no_coverage -r TOAD-SR-TRIMMED.fa -o TOAD-SR-TRIMMED_IDBA_V3 --num_threads 80
+
+##WTDBG2 WITH HELP OF IDBA CONTIGS:
+nohup ~/bin/BUILDS/CSA2.6/bin/wtdbg2.2/wtdbg2 -i TOAD-1-16.1.FAST-BC.fa.gz -i TOAD-SR-TRIMMED_IDBA_V3/contig-252.fa.gz -o LR-SR-1 -p 19 -AS 4 -s 0.05 -L 2000 -e 2 -t 80 -K 1000 2>LR-SR-1.log
+~/bin/BUILDS/CSA2.6/bin/wtdbg2.2/wtdbg-cns -i LR-SR-1.ctg.lay.gz -o LR-SR.ctg.fa -t 80
+
+##POLISH SEQUENCE BY FLYE:
+~/miniconda2/bin/flye --polish-target LR-SR-1.ctg.fa --threads 80 --nano-raw TOAD-1-16.1.FAST-BC.fa.gz -o POLISH-BUFVIR
+
+##POLISH BY SHORT READS and VCFCONSENSUS Round1:
+minimap2 -K 2000M -I 100G -t 80 -x sr -a polished_1.fasta FOR.fq.gz REV.fq.gz 2>POLISH-SR1_PPmap.log | samtools addreplacerg -r ID:POLISH-SR1 -O SAM - | samtools sort -@48 -m 16G -O BAM -o POLISH-SR1.bam -
+samtools index -c -@48 POLISH-SR1.bam
+samtools faidx polished_1.fasta
+Platypus.py callVariants --refFile=polished_1.fasta --nCPU=80 --bamFiles=POLISH-SR1.bam --output=POLISH-SR1.vcf --assembleAll=1 --coverageSamplingLevel=100 --maxSize=2000 --logFileName=POLISH-SR1.vcf.log
+bgzip POLISH-SR1.vcf
+bcftools index POLISH-SR1.vcf.gz
+bcftools consensus -f polished_1.fasta POLISH-SR1.vcf.gz -o POLISH-SR1.fa > POLISH-SR1.bcftools.log 2>&1
+
+##POLISH BY SHORT READS and VCFCONSENSUS Round2:
+minimap2 -K 2000M -I 100G -t 80 -x sr -a POLISH-SR1.fa FOR.fq.gz REV.fq.gz 2>POLISH-SR2_PPmap.log | samtools addreplacerg -r ID:POLISH-SR2 -O SAM - | samtools sort -@48 -m 16G -O BAM -o POLISH-SR2.bam -
+samtools index -c -@48 POLISH-SR2.bam
+samtools faidx POLISH-SR1.fa
+Platypus.py callVariants --refFile=POLISH-SR1.fa --nCPU=80 --bamFiles=POLISH-SR2.bam --output=POLISH-SR2.vcf --assembleAll=1 --coverageSamplingLevel=100 --maxSize=2000 --logFileName=POLISH-SR2.vcf.log
+bgzip POLISH-SR2.vcf
+bcftools index POLISH-SR2.vcf.gz
+bcftools consensus -f POLISH-SR1.fa POLISH-SR2.vcf.gz -o POLISH-SR2.fa > POLISH-SR2.bcftools.log 2>&1
+
+##HiC scaffolding by juicer/3dDNA
+#using a modified juicer script to compress temporary files to save disk space
+seqtk seq -l0 POLISH-SR2.fa | parallel -j 80 -l 2 -k --pipe 'python ~/bin/BUILDS/juicer/misc/generate_site_positions_HK.py Arima bufVir /dev/stdin ' > bufVir_Arima.txt
+seqtk seq -l0 POLISH-SR2.fa | cut -f 1,2 > POLISH-SR2.fa.sizes
+bash ~/bin/BUILDS/juicer/CPU/juicer_PIGZ.sh -S early -b $lig -g bufVir -z POLISH-SR2.fa -p POLISH-SR2.fa.sizes -y bufVir_Arima.txt -t 40 -D ~/bin/BUILDS/juicer/ -d /data2/TOAD/HiC-BUFVIR/JUICER/JUICER1
+#run 3dDNA
+bash ~/bin/BUILDS/3d-dna/run-asm-pipeline.sh POLISH-SR2-50-Q1.fa merged_nodups_Q1-small.txt
+#manual curation by juicer
+# MAKE scaffolds from reviewed assembly file (OWN SCRIPT!)
+bash ~/bin/MAKE-HIC-SCF.sh POLISH-SR2-50-Q1.2.assembly POLISH-SR2-50-Q1.fa R2
+#to improve contig ordering in single chromosomes, we splitted the 3dDNA scaffolded genomes into single chromosomes and rerun 3dDNA on each chromosome
+
+##FINAL gap closing using CSA script :
+#RUN STITCH
+mkfifo in.fa
+~/bin/fasta_formatter -i bufVir1.1.fa > in.fa &
+bash ~/bin/BUILDS/CSA2.6/script//STITCH.sh in.fa ~/bin/BUILDS/CSA2.6 > ./bufVir1.1.stitch.fa
+# closed 903 Gaps!
