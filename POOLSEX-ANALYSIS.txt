@@ -18,3 +18,22 @@ bedtools merge -i F-hom-M-het.minimap2.bed -d 9000 | bedtools annotate -counts -
 cat F+M_bufVirM.minimap2.vcf | grep -v '^#' | mawk '{nf=split($10,female,":");nm=split($11,male,":");print $1"\t"$2"\t"female[nf-1]"\t"female[nf]"\t"male[nf-1]"\t"male[nf]}' | grep -v ',' | mawk -v het=0.45 -v min=0.07 -v mincov=15 '{if($5>=mincov && $3>=mincov && ( $6<=min*$5 || $6>=$5*(1-min) ) && ($4>het*$3 && $4<(1-het)*$3)){print $1"\t"$2-1"\t"$2}}' > F-het-M-hom.minimap2.bed &
 #cluster variants by distance and output top 10 regions
 bedtools merge -i F-het-M-hom.minimap2.bed -d 9000 | bedtools annotate -counts -i - -files F-het-M-hom.minimap2.bed |awk '{print $0"\t"1000*$4/($3-$2)}' | sort -k4,4rn | head
+
+##COVERAGE ANALYSIS
+
+#coverage analysis with minimap2 mappings using uniquely mapped MQ60 reads by bedgraph files
+samtools view -F 256 -q 60 -bu FEMALE.minimap2.bam | bedtools genomecov -ibam /dev/stdin -bga -split | pigz -c > FEMALE.minimap2-Q60.bg.gz &
+samtools view -F 256 -q 60 -bu   MALE.minimap2.bam | bedtools genomecov -ibam /dev/stdin -bga -split | pigz -c > MALE.minimap2-Q60.bg.gz &
+bedtools unionbedg -i MALE.minimap2-Q60.bg.gz FEMALE.minimap2-Q60.bg.gz | pigz -c > M-F-Q60-minimap2.bg.gz
+
+#normalize by modal coverage male=41 and female=46
+pigz -dc M-F-Q60-minimap2.bg.gz | mawk '{print $1"\t"$2"\t"$3"\t"$4/41"\t"$5/46}' | pigz -c > M-F-Q60-norm-minimap2.bg.gz
+
+#extract regions with close to ZERO coverage (0.05) in female and haploid coverage (0.25-0.75) in male
+pigz -dc M-F-Q60-norm-minimap2.bg.gz | mawk '{if($4>0.25 && $4<0.75 && $5<=0.05){print}}' | bedtools merge -i - -d 0 | mawk '{print $0"\t"$3-$2}' > m0.25-0.75_f0-0.05.Q60.minimap2.bed
+
+#cluster by distance
+bedtools merge -d 1760 -i m0.25-0.75_f0-0.05.Q60.minimap2.bed | mawk '{print $0"\t"$3-$2}' > m0.25-0.75_f0-0.05.Q60.minimap2.bed.cluster1760.bed
+
+#summarize sex specific covered bases in clustered regions
+bedtools annotate -i m0.25-0.75_f0-0.05.Q60.minimap2.bed.cluster1760.bed -both -files m0.25-0.75_f0-0.05.Q60.minimap2.bed | sort -k1,1V -k2,2n | mawk '{print $0"\t"int($6*($3-$2))}' > m0.25-0.75_f0-0.05.minimap2.Q60.cluster1760.bed.counts
