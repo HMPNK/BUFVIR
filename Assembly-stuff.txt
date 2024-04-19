@@ -1,3 +1,5 @@
+##Assembly female genome
+
 ##High kmer short read assembly using tweaked version of IDBA-UD:
 idba_ud_tweaked --mink 38 --maxk 252 --step 50 --seed_kmer 60 --similar 0.96 --inner_mink 14 --inner_step 14 --no_coverage -r TOAD-SR-TRIMMED.fa -o TOAD-SR-TRIMMED_IDBA_V3 --num_threads 80
 
