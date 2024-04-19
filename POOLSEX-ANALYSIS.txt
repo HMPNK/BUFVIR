@@ -1,0 +1,20 @@
+##POOLSEX ANLYSIS
+
+#mapping to male genome (for female genome replace "bufVirM.final.fa")
+minimap2 -K 2000M -I 100G -t 40 -x sr -a bufVirM.final.fa Bufo_Females_EDSW210029005-1a_HV5TVDSX2_L3_1.fq.gz Bufo_Females_EDSW210029005-1a_HV5TVDSX2_L3_2.fq.gz 2>F_bufVirM-minimap2.log | samtools addreplacerg -r ID:F -r SM:F.sample -O SAM - | samtools sort -@32 -m 10G -O BAM -o FEMALE.minimap2.bam -
+minimap2 -K 2000M -I 100G -t 40 -x sr -a bufVirM.final.fa   Bufo_Males_EDSW210029004-1a_HV5TVDSX2_L2_1.fq.gz   Bufo_Males_EDSW210029004-1a_HV5TVDSX2_L2_2.fq.gz 2>M_bufVirM-minimap2.log | samtools addreplacerg -r ID:M -r SM:M.sample -O SAM - | samtools sort -@32 -m 10G -O BAM -o MALE.minimap2.bam -
+samtools index -c -@40 FEMALE.minimap2.bam
+samtools index -c -@40 MALE.minimap2.bam
+
+#call Variants
+nohup platypus callVariants --refFile=bufVirM.final.fa --nCPU=80 --bamFiles=bam-M-minimap2.list --output=F+M_bufVirM.minimap2.vcf --assembleAll=1 --logFileName=F+M_bufVirM.minimap2.vcf.log
+
+#extract sex specific heterozygeous variants (XY -like)
+cat F+M_bufVirM.minimap2.vcf | grep -v '^#' | mawk '{nf=split($10,female,":");nm=split($11,male,":");print $1"\t"$2"\t"female[nf-1]"\t"female[nf]"\t"male[nf-1]"\t"male[nf]}' | grep -v ',' | mawk -v het=0.45 -v min=0.07 -v mincov=15 '{if($3>=mincov && $5>=mincov && ( $4<=min*$3 || $4>=$3*(1-min) ) && ($6>het*$5 && $6<(1-het)*$5)){print $1"\t"$2-1"\t"$2}}' > F-hom-M-het.minimap2.bed &
+#cluster variants by distance and output top 10 regions
+bedtools merge -i F-hom-M-het.minimap2.bed -d 9000 | bedtools annotate -counts -i - -files F-hom-M-het.minimap2.bed |awk '{print $0"\t"1000*$4/($3-$2)}' | sort -k4,4rn | head
+
+#extract sex specific heterozygeous variants (ZW -like)
+cat F+M_bufVirM.minimap2.vcf | grep -v '^#' | mawk '{nf=split($10,female,":");nm=split($11,male,":");print $1"\t"$2"\t"female[nf-1]"\t"female[nf]"\t"male[nf-1]"\t"male[nf]}' | grep -v ',' | mawk -v het=0.45 -v min=0.07 -v mincov=15 '{if($5>=mincov && $3>=mincov && ( $6<=min*$5 || $6>=$5*(1-min) ) && ($4>het*$3 && $4<(1-het)*$3)){print $1"\t"$2-1"\t"$2}}' > F-het-M-hom.minimap2.bed &
+#cluster variants by distance and output top 10 regions
+bedtools merge -i F-het-M-hom.minimap2.bed -d 9000 | bedtools annotate -counts -i - -files F-het-M-hom.minimap2.bed |awk '{print $0"\t"1000*$4/($3-$2)}' | sort -k4,4rn | head
