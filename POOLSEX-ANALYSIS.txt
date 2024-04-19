@@ -1,4 +1,4 @@
-##POOLSEX ANLYSIS
+##POOLSEX ANALYSIS
 
 #mapping to male genome (for female genome replace "bufVirM.final.fa")
 minimap2 -K 2000M -I 100G -t 40 -x sr -a bufVirM.final.fa Bufo_Females_EDSW210029005-1a_HV5TVDSX2_L3_1.fq.gz Bufo_Females_EDSW210029005-1a_HV5TVDSX2_L3_2.fq.gz 2>F_bufVirM-minimap2.log | samtools addreplacerg -r ID:F -r SM:F.sample -O SAM - | samtools sort -@32 -m 10G -O BAM -o FEMALE.minimap2.bam -
