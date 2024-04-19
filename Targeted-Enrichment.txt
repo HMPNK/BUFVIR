@@ -1,0 +1,20 @@
+##create script file "MAPPING.PIPE.sh" containing:
+minimap2 -I 100G -a -x sr -t 4 bufVir1d.fa.gz $1 $2 2>$3.log | samtools addreplacerg -r ID:$3 -r SM:$3 -O SAM - | samtools fixmate -@11 -r - - | samtools sort -@11 -m 8G -o $3.bam -
+
+##creat mapping batch file
+find X204SC22113247-Z01-F001/01.RawData/| grep fq.gz$ | sort | awk '{n++; if(n==1){r1=$0;split($0,a,"/")} else if(n==2){split($0,b,"/");if(a[3]==b[3]){print "bash MAPPING.PIPE.sh "r1" "$0" "a[3];n=0}}}' > MAPPING.BATCH.sh
+#run mapping in parallel
+cat MAPPING.BATCH.sh | nohup parallel -j 10 &
+
+##MERGE BAMs
+samtools merge -@16 All-Enriched.bam BbalSi105M.bam BbalSi106M.bam BbalSi12M.bam BbalSi13M.bam BbalSi336M.bam BbalSi337F.bam BbalSi39F.bam BbalSi41F.bam BshaSz12M.bam BshaSz13M.bam BshaSz16aF.bam BshaSz24F.bam BshaSz26F.bam BshaSz28F.bam BshaSz29M.bam BshaSz30M.bam BshaSz31F.bam BsicBvTU57F.bam BsicSi113F.bam BsicSi135F.bam BsicSi142F.bam BsicSi213M.bam BsicSi214M.bam BsicSi218M.bam BsicSi334M.bam BturaKy111F.bam BturaKy11F.bam BturaKy12M.bam BturaKy13M.bam BturaKy15F.bam BturaKy21M.bam BturaKy23M.bam BturaKy3F.bam BturaKy9F.bam BvGR053F.bam BvGR057M.bam BvGR067M.bam BvGR073F.bam BvGR094M.bam BvGR103F.bam BvGR131F.bam BvGR96bM.bam BvGRO93F.bam
+
+##INDEX BAMs
+samtools index -c All-Enriched.bam
+
+##Samtools/bcftools variant calling
+samtools view -bu  All-Enriched.bam scf1:324181812-324192250 scf1:566783149-566866298 | bcftools mpileup --annotate DP4 --max-depth 1000000000 -f reference.fa - | bcftools call -mv -Ob -o All-Enriched.calls.bcf
+
+##Extract allele frequency table from bcf DP4 fields
+bcftools view All-Enrichmed.bam.calls.bcf | grep "#CHROM" -w | cut -f 1,2,10- > All-Enriched.allelefreq.txt
+bcftools view All-Enriched.bam.calls.bcf | grep -w ^scf1 | awk '{printf $1"\t"$2"\t";n=split($0,a,"\t");for(x=10;x<=n;x++){n2=split(a[x],b,":");if(b[n2]!="0,0,0,0"){split(b[n2],c,",");printf (c[1]+c[2])/(c[1]+c[2]+c[3]+c[4])"\t"} else{printf "NA\t"}} printf "\n"}' >> 
