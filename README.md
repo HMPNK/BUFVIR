@@ -1,2 +1,2 @@
 # BUFVIR
-Tools and parameters used for genomic analyses of *Bufotes viridis*
+Tools and commandlines used for genomic analyses of *Bufotes viridis*
